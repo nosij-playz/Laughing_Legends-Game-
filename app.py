@@ -12,19 +12,44 @@ app.secret_key = 'your-secret-key-here'
 
 # Initialize Firebase
 try:
-    # Get Firebase credentials path from environment variable
-    firebase_cred_path = os.environ.get('FIREBASE_CREDENTIALS')
-    
-    # Check if file exists before initializing
-    if os.path.exists(firebase_cred_path):
+    # Support multiple ways to provide credentials:
+    # - FIREBASE_CREDENTIALS_PATH : path to service-account JSON file
+    # - FIREBASE_CREDENTIALS_JSON : full JSON content as env var
+    # - FIREBASE_CREDENTIALS : legacy; can be either a path or the JSON string
+    legacy_env = os.environ.get('FIREBASE_CREDENTIALS')
+    firebase_cred_path = os.environ.get('FIREBASE_CREDENTIALS_PATH') or legacy_env
+    firebase_cred_json = os.environ.get('FIREBASE_CREDENTIALS_JSON')
+
+    # If legacy env looks like JSON (starts with '{'), prefer it as JSON
+    if not firebase_cred_json and legacy_env and legacy_env.strip().startswith('{'):
+        firebase_cred_json = legacy_env
+
+    cred = None
+
+    # Try file path first (if provided and exists)
+    if firebase_cred_path and os.path.exists(firebase_cred_path):
         cred = credentials.Certificate(firebase_cred_path)
         firebase_admin.initialize_app(cred)
         db = firestore.client()
-        print(f"✅ Firebase initialized successfully with: {firebase_cred_path}")
+        print(f"✅ Firebase initialized successfully with file: {firebase_cred_path}")
+
+    # Otherwise, try JSON content (but avoid parsing empty strings)
+    elif firebase_cred_json and firebase_cred_json.strip():
+        try:
+            cred_dict = json.loads(firebase_cred_json)
+            cred = credentials.Certificate(cred_dict)
+            firebase_admin.initialize_app(cred)
+            db = firestore.client()
+            print("✅ Firebase initialized successfully from JSON environment variable")
+        except Exception as inner_e:
+            print(f"❌ Failed to parse FIREBASE_CREDENTIALS_JSON: {inner_e}")
+            db = None
+
     else:
-        print(f"⚠️ Firebase credentials file not found at: {firebase_cred_path}")
+        print("⚠️ No valid Firebase credentials provided. Set FIREBASE_CREDENTIALS_PATH (file) or FIREBASE_CREDENTIALS_JSON (JSON string).")
         print("🚫 Using mock data mode")
         db = None
+
 except Exception as e:
     print(f"❌ Firebase initialization failed: {e}")
     print("🚫 Using mock data mode")
@@ -77,6 +102,22 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+
+def resolve_team_name_from_participants():
+    """Return the authoritative team name using session['unique_code'] when possible."""
+    team_name = session.get('team_name')
+    unique_code = session.get('unique_code')
+    if db is not None and unique_code:
+        try:
+            participants_ref = db.collection('participants')
+            p_query = participants_ref.where('uniqueCode', '==', unique_code).limit(1).get()
+            if len(p_query) == 1:
+                p_data = p_query[0].to_dict()
+                return p_data.get('teamName') or p_data.get('team_name') or p_data.get('name') or team_name
+        except Exception as e:
+            print(f"Firestore participants lookup error in resolve_team_name: {e}")
+    return team_name
+
 @app.route('/')
 def index():
     if 'team_name' in session:
@@ -96,9 +137,53 @@ def login():
                 results = query.get()
                 
                 if len(results) == 1:
-                    team_data = results[0].to_dict()
-                    session['team_name'] = team_data['teamName']
+                    participant_doc = results[0]
+                    team_data = participant_doc.to_dict()
+                    # Be flexible with field names (teamName, team_name, name)
+                    team_name = team_data.get('teamName') or team_data.get('team_name') or team_data.get('name')
+                    if not team_name:
+                        # Fallback to a default constructed name
+                        team_name = f"Team-{unique_code}"
+
+                    session['team_name'] = team_name
                     session['unique_code'] = unique_code
+                    # Safely increment total participants once per participant
+                    try:
+                        participant_doc = results[0]
+                        participant_ref = participant_doc.reference
+                        participant_dict = participant_doc.to_dict()
+                        already_counted = participant_dict.get('counted', False)
+
+                        if not already_counted:
+                            # Use an atomic increment to update a central counters doc
+                            counters_ref = db.collection('meta').document('counters')
+                            counters_ref.set({'totalParticipants': firestore.Increment(1)}, merge=True)
+                            # Mark this participant as counted to avoid double-counting on re-login
+                            participant_ref.update({'counted': True})
+                            print(f"✅ totalParticipants incremented for uniqueCode={unique_code}")
+                        else:
+                            print(f"ℹ️ Participant already counted for uniqueCode={unique_code}")
+                    except Exception as e:
+                        print(f"⚠️ Failed to update totalParticipants: {e}")
+                    # Ensure leaderboard document exists for this team name
+                    try:
+                        leaderboard_ref = db.collection('leaderboard')
+                        lb_q = leaderboard_ref.where('name', '==', session['team_name']).limit(1).get()
+                        if len(lb_q) == 0:
+                            # Create initial leaderboard entry
+                            leaderboard_ref.add({
+                                'name': session['team_name'],
+                                'totalPoints': 0,
+                                'wins': 0,
+                                'gamesPlayed': 0,
+                                'status': 'online'
+                            })
+                            print(f"✅ Created leaderboard entry for {session['team_name']}")
+                        else:
+                            print(f"ℹ️ Leaderboard entry exists for {session['team_name']}")
+                    except Exception as e:
+                        print(f"⚠️ Failed to ensure leaderboard entry: {e}")
+
                     return redirect(url_for('dashboard'))
                 else:
                     return render_template('login.html', error='Invalid code!')
@@ -152,7 +237,18 @@ def dashboard():
 @app.route('/api/status')
 @login_required
 def api_status():
-    team_name = session['team_name']
+    # Prefer authoritative team name from participants collection (by unique code)
+    team_name = session.get('team_name')
+    unique_code = session.get('unique_code')
+    if db is not None and unique_code:
+        try:
+            participants_ref = db.collection('participants')
+            p_query = participants_ref.where('uniqueCode', '==', unique_code).limit(1).get()
+            if len(p_query) == 1:
+                p_data = p_query[0].to_dict()
+                team_name = p_data.get('teamName') or p_data.get('team_name') or p_data.get('name') or team_name
+        except Exception as e:
+            print(f"Firestore participants lookup error in api_status: {e}")
     
     if db is not None:
         try:
@@ -319,7 +415,18 @@ def game(image_number):
 def update_score():
     data = request.json
     points = data.get('points', 0)
-    team_name = session['team_name']
+    # Resolve authoritative team name from participants collection when possible
+    team_name = session.get('team_name')
+    unique_code = session.get('unique_code')
+    if db is not None and unique_code:
+        try:
+            participants_ref = db.collection('participants')
+            p_query = participants_ref.where('uniqueCode', '==', unique_code).limit(1).get()
+            if len(p_query) == 1:
+                p_data = p_query[0].to_dict()
+                team_name = p_data.get('teamName') or p_data.get('team_name') or p_data.get('name') or team_name
+        except Exception as e:
+            print(f"Firestore participants lookup error in update_score: {e}")
     
     print(f"Updating score for {team_name}: +{points} points")
     
@@ -367,8 +474,20 @@ def update_score():
                     return jsonify({'success': False, 'error': 'No matching fields to update'})
                     
             else:
-                print("❌ Team not found in leaderboard")
-                return jsonify({'success': False, 'error': 'Team not found'})
+                # If team not found, create a leaderboard doc for them and apply the update
+                try:
+                    new_doc = leaderboard_ref.add({
+                        'name': team_name,
+                        'totalPoints': points,
+                        'wins': 1,
+                        'gamesPlayed': 0,
+                        'status': 'online'
+                    })
+                    print(f"✅ Created leaderboard entry for missing team {team_name} and set points={points}")
+                    return jsonify({'success': True, 'created': True, 'points_added': points})
+                except Exception as e:
+                    print(f"❌ Failed to create leaderboard entry: {e}")
+                    return jsonify({'success': False, 'error': 'Team not found and creation failed'})
                 
         except Exception as e:
             print(f"❌ Score update error: {e}")
@@ -407,7 +526,18 @@ def find_missing_numbers(available_numbers):
 @login_required
 def complete_image():
     """Update gamesPlayed when an image is completed"""
-    team_name = session['team_name']
+    # Resolve authoritative team name from participants collection when possible
+    team_name = session.get('team_name')
+    unique_code = session.get('unique_code')
+    if db is not None and unique_code:
+        try:
+            participants_ref = db.collection('participants')
+            p_query = participants_ref.where('uniqueCode', '==', unique_code).limit(1).get()
+            if len(p_query) == 1:
+                p_data = p_query[0].to_dict()
+                team_name = p_data.get('teamName') or p_data.get('team_name') or p_data.get('name') or team_name
+        except Exception as e:
+            print(f"Firestore participants lookup error in complete_image: {e}")
     
     print(f"Marking image completion for {team_name}")
     
@@ -445,7 +575,20 @@ def complete_image():
                     return jsonify({'success': False, 'error': 'No fields to update'})
                     
             else:
-                return jsonify({'success': False, 'error': 'Team not found'})
+                # If team not found, create a leaderboard entry with gamesPlayed = 1
+                try:
+                    leaderboard_ref.add({
+                        'name': team_name,
+                        'totalPoints': 0,
+                        'wins': 0,
+                        'gamesPlayed': 1,
+                        'status': 'online'
+                    })
+                    print(f"✅ Created leaderboard entry for missing team {team_name} with gamesPlayed=1")
+                    return jsonify({'success': True, 'created': True, 'gamesPlayed': 1})
+                except Exception as e:
+                    print(f"❌ Failed to create leaderboard entry for image completion: {e}")
+                    return jsonify({'success': False, 'error': 'Team not found and creation failed'})
                 
         except Exception as e:
             print(f"❌ Image completion update error: {e}")
