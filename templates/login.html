@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="login-container">
+    <div class="login-card slide-up">
+        <h1 class="login-title">Laughing Legends</h1>
+        <p class="login-subtitle">Enter your unique code to begin the adventure!</p>
+        
+        {% if error %}
+        <div class="error-message" style="background: rgba(239,68,68,0.2); border: 1px solid var(--danger); color: var(--danger); padding: 1rem; border-radius: 10px; margin-bottom: 1.5rem; text-align: center;">
+            {{ error }}
+        </div>
+        {% endif %}
+        
+        <form method="POST" action="{{ url_for('login') }}">
+            <div class="form-group">
+                <label for="unique_code" class="form-label">Unique Code</label>
+                <input type="text" 
+                       id="unique_code" 
+                       name="unique_code" 
+                       class="form-input" 
+                       placeholder="Enter your team code..." 
+                       required
+                       autofocus>
+            </div>
+            
+            <button type="submit" class="btn btn-primary">
+                🚀 Start Gaming
+            </button>
+        </form>
+        
+        <div style="margin-top: 2rem; padding-top: 2rem; border-top: 1px solid var(--glass-border);">
+            <p style="color: rgba(255,255,255,0.7); font-size: 0.9rem; text-align: center;">
+                Don't have a code? Contact the event organizers.
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Add some interactive animations
+        const loginCard = document.querySelector('.login-card');
+        const formInput = document.querySelector('.form-input');
+        
+        // Pulse animation on load
+        setTimeout(() => {
+            loginCard.classList.add('pulse');
+        }, 1000);
+        
+        // Focus effect
+        formInput.addEventListener('focus', function() {
+            this.parentElement.classList.add('glow');
+        });
+        
+        formInput.addEventListener('blur', function() {
+            this.parentElement.classList.remove('glow');
+        });
+    });
+</script>
+{% endblock %}

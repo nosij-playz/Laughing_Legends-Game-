@@ -1,0 +1,891 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="game-container">
+    <!-- Image Section -->
+    <div class="game-image glass-card">
+        <h3 class="image-title">Image Puzzle #{{ image_number }}</h3>
+        <img src="{{ url_for('static', filename='LAUGH/' ~ '%03d'|format(image_number) ~ '.jpg') }}" 
+             alt="Game Image {{ image_number }}" 
+             class="game-image-display">
+        <div class="image-instruction">
+            <p>🔍 Analyze the image and answer the questions below</p>
+            <p style="font-size: 0.9rem; color: var(--secondary); margin-top: 0.5rem;">
+                🎲 {{ total_questions }} random questions selected for this round
+            </p>
+        </div>
+    </div>
+
+    <!-- Questions Section -->
+    <div class="questions-container glass-card">
+        <h2 class="questions-title">Questions & Answers</h2>
+        
+        <div style="text-align: center; margin-bottom: 1.5rem; color: rgba(255,255,255,0.8);">
+            <p>✨ You have {{ total_questions }} random questions to solve!</p>
+        </div>
+        
+        <div id="questions-list">
+            {% set question_counter = [] %}
+            {% for difficulty, questions in image_data.items() %}
+                {% for question in questions %}
+                {% set _ = question_counter.append(1) %}
+                {% set q_index = question_counter|length %}
+                <div class="question-card" id="question-{{ q_index }}">
+                    <div class="question-header">
+                        <div class="question-text">Q{{ q_index }}. {{ question.question }}</div>
+                        <div class="question-meta">
+                            <span class="difficulty-badge difficulty-{{ difficulty }}">
+                                {{ difficulty|title }} 
+                                {% if difficulty == 'easy' %}★☆☆
+                                {% elif difficulty == 'medium' %}★★☆
+                                {% else %}★★★{% endif %}
+                            </span>
+                            <span class="score-badge">
+                                {% if difficulty == 'easy' %}10 points
+                                {% elif difficulty == 'medium' %}20 points
+                                {% else %}30 points{% endif %}
+                            </span>
+                        </div>
+                    </div>
+                    
+                    <div class="answer-input-container">
+                        <input type="text" 
+                               class="answer-input" 
+                               placeholder="Enter answer in format: flag{your_answer_here}" 
+                               data-question-id="{{ q_index }}"
+                               data-difficulty="{{ difficulty }}"
+                               data-correct-answer="{{ question.answer }}"
+                               id="answer-input-{{ q_index }}">
+                        
+                        <!-- Mobile Enter Button -->
+                        <button class="mobile-enter-btn" 
+                                data-question-id="{{ q_index }}"
+                                onclick="checkMobileAnswer(this)">
+                            ✅ Submit Answer
+                        </button>
+                    </div>
+                    
+                    <div class="hints-container">
+                        <div class="hint-buttons">
+                            <!-- FIXED: Store hints as data attributes on the buttons -->
+                            <button class="hint-btn" 
+                                    data-question-id="{{ q_index }}"
+                                    data-hint-index="0"
+                                    data-hint-text="{{ question.hints[0] if question.hints and question.hints|length > 0 else 'No hint available' }}"
+                                    onclick="showHint(this)">
+                                💡 Hint 1 (-25%)
+                            </button>
+                            
+                            <button class="hint-btn" 
+                                    data-question-id="{{ q_index }}"
+                                    data-hint-index="1"
+                                    data-hint-text="{{ question.hints[1] if question.hints and question.hints|length > 1 else 'No hint available' }}"
+                                    onclick="showHint(this)">
+                                💡 Hint 2 (-25%)
+                            </button>
+                            
+                            <button class="hint-btn" 
+                                    data-question-id="{{ q_index }}"
+                                    data-hint-index="2"
+                                    data-hint-text="{{ question.hints[2] if question.hints and question.hints|length > 2 else 'No hint available' }}"
+                                    onclick="showHint(this)">
+                                💡 Hint 3 (-25%)
+                            </button>
+                        </div>
+                        
+                        <!-- Hint Display Area -->
+                        <div id="hints-{{ q_index }}" class="hints-area"></div>
+                    </div>
+
+                    <div id="result-{{ q_index }}" class="result-message"></div>
+                </div>
+                {% endfor %}
+            {% endfor %}
+        </div>
+
+        <!-- Progress & Controls -->
+        <div class="progress-container">
+            <div class="progress-info">
+                <span>Progress: <span id="answered-count">0</span>/<span id="total-questions">{{ total_questions }}</span> questions</span>
+                <span>Score: +<span id="current-score">0</span> points</span>
+            </div>
+            <div class="progress-bar-background">
+                <div id="progress-bar" class="progress-bar-fill"></div>
+            </div>
+        </div>
+
+        <div class="game-controls">
+            <button onclick="skipImage()" class="btn btn-danger" id="skip-btn">
+                ⏭️ Skip This Level
+            </button>
+            <button onclick="moveToImageSelection()" class="btn btn-success" id="next-btn" style="display: none;">
+                🎯 Select Next Image
+            </button>
+        </div>
+    </div>
+</div>
+
+<div id="game-status" class="game-status-message">
+    <p>🔍 Solve all {{ total_questions }} questions to unlock next image selection!</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let answeredQuestions = new Set();
+let totalQuestions = {{ total_questions }};
+let currentScore = 0;
+let hintsUsed = {};
+let imageNumber = {{ image_number }};
+let imageCompleted = false;
+
+// Initialize hints tracking
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('🎮 Game page loaded for image:', imageNumber);
+    console.log('Total random questions:', totalQuestions);
+    
+    // Show welcome message for random questions
+    setTimeout(() => {
+        alert(`🎯 Welcome to Image ${imageNumber}!\n\nYou have ${totalQuestions} random questions to solve. Good luck!`);
+    }, 500);
+    
+    // Initialize hints tracking for each question
+    const questions = document.querySelectorAll('.question-card');
+    questions.forEach(question => {
+        const questionId = question.id.replace('question-', '');
+        hintsUsed[questionId] = 0;
+        console.log(`Initialized hints tracking for question ${questionId}`);
+    });
+    
+    // Debug: Log all hint buttons and their data
+    const hintButtons = document.querySelectorAll('.hint-btn');
+    hintButtons.forEach(button => {
+        const questionId = button.getAttribute('data-question-id');
+        const hintIndex = button.getAttribute('data-hint-index');
+        const hintText = button.getAttribute('data-hint-text');
+        console.log(`Hint Button - Q${questionId}, Hint${hintIndex}:`, hintText);
+    });
+    
+    // Add animations to questions
+    const questionCards = document.querySelectorAll('.question-card');
+    questionCards.forEach((card, index) => {
+        card.style.animationDelay = `${index * 0.1}s`;
+        card.classList.add('slide-up');
+    });
+    
+    // Add focus effects to answer inputs
+    const answerInputs = document.querySelectorAll('.answer-input');
+    answerInputs.forEach(input => {
+        input.addEventListener('focus', function() {
+            this.classList.add('answer-input-focused');
+        });
+        
+        input.addEventListener('blur', function() {
+            if (!this.disabled) {
+                this.classList.remove('answer-input-focused');
+            }
+        });
+        
+        // Add Enter key support for desktop
+        input.addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                checkAnswer(this);
+            }
+        });
+    });
+    
+    // Hide mobile enter buttons on desktop, show on mobile
+    checkMobileView();
+    window.addEventListener('resize', checkMobileView);
+});
+
+function checkMobileView() {
+    const mobileButtons = document.querySelectorAll('.mobile-enter-btn');
+    const isMobile = window.innerWidth <= 768;
+    
+    mobileButtons.forEach(button => {
+        button.style.display = isMobile ? 'block' : 'none';
+    });
+}
+
+function checkAnswer(inputElement) {
+    const questionId = inputElement.getAttribute('data-question-id');
+    const correctAnswer = inputElement.getAttribute('data-correct-answer');
+    const difficulty = inputElement.getAttribute('data-difficulty');
+    const userAnswer = inputElement.value.trim();
+    
+    // Calculate base points
+    let basePoints = 0;
+    if (difficulty === 'easy') basePoints = 10;
+    else if (difficulty === 'medium') basePoints = 20;
+    else if (difficulty === 'hard') basePoints = 30;
+    
+    if (userAnswer.toLowerCase() === correctAnswer.toLowerCase()) {
+        // Correct answer
+        const hintPenalty = hintsUsed[questionId] * basePoints * 0.25;
+        const finalPoints = Math.max(1, basePoints - hintPenalty);
+        
+        inputElement.classList.add('answer-correct');
+        inputElement.disabled = true;
+        
+        // Disable mobile button too
+        const mobileBtn = document.querySelector(`.mobile-enter-btn[data-question-id="${questionId}"]`);
+        if (mobileBtn) {
+            mobileBtn.disabled = true;
+            mobileBtn.classList.add('answer-correct');
+        }
+        
+        // Show success message
+        const resultElement = document.getElementById(`result-${questionId}`);
+        resultElement.innerHTML = `
+            <div class="result-success">
+                ✅ Correct! +${finalPoints} points ${hintsUsed[questionId] > 0 ? `(after ${hintsUsed[questionId]} hint penalties)` : ''}
+            </div>
+        `;
+        
+        answeredQuestions.add(questionId);
+        currentScore += finalPoints;
+        updateProgress();
+        
+        // Update Firestore with points earned AND question completion (wins)
+        updateFirestoreScore(finalPoints);
+        
+    } else {
+        // Wrong answer
+        inputElement.classList.add('answer-wrong');
+        
+        const resultElement = document.getElementById(`result-${questionId}`);
+        resultElement.innerHTML = `
+            <div class="result-error">
+                ❌ Wrong answer! Try again.
+            </div>
+        `;
+        
+        setTimeout(() => {
+            inputElement.classList.remove('answer-wrong');
+            resultElement.innerHTML = '';
+        }, 2000);
+    }
+}
+
+// Mobile-specific answer checking function
+function checkMobileAnswer(button) {
+    const questionId = button.getAttribute('data-question-id');
+    const inputElement = document.getElementById(`answer-input-${questionId}`);
+    
+    if (!inputElement) {
+        console.error('Input element not found for question:', questionId);
+        return;
+    }
+    
+    // Add a quick animation to the button
+    button.classList.add('mobile-btn-pressed');
+    setTimeout(() => {
+        button.classList.remove('mobile-btn-pressed');
+    }, 200);
+    
+    checkAnswer(inputElement);
+}
+
+// FIXED: Simplified hint function using data attributes
+function showHint(button) {
+    const questionId = button.getAttribute('data-question-id');
+    const hintIndex = button.getAttribute('data-hint-index');
+    let hintText = button.getAttribute('data-hint-text');
+    
+    console.log('🔧 showHint called:', {
+        questionId: questionId,
+        hintIndex: hintIndex,
+        hintText: hintText
+    });
+    
+    // Check if hint is available
+    if (!hintText || hintText === 'No hint available') {
+        alert('No hint available for this question.');
+        return;
+    }
+    
+    // Get the hint area
+    const hintArea = document.getElementById(`hints-${questionId}`);
+    if (!hintArea) {
+        console.error('❌ Hint area not found:', `hints-${questionId}`);
+        return;
+    }
+    
+    // Create and append hint element
+    const hintElement = document.createElement('div');
+    hintElement.className = 'hint-text';
+    hintElement.innerHTML = `
+        <div class="hint-content">
+            <span class="hint-icon">💡</span>
+            <span class="hint-message">
+                <strong>Hint ${parseInt(hintIndex) + 1}:</strong> ${hintText}
+            </span>
+        </div>
+    `;
+    
+    hintArea.appendChild(hintElement);
+    
+    // Disable the button and update its appearance
+    button.disabled = true;
+    button.classList.add('hint-used');
+    button.innerHTML = `💡 Hint ${parseInt(hintIndex) + 1} (Used)`;
+    
+    // Track hints used
+    hintsUsed[questionId] = (hintsUsed[questionId] || 0) + 1;
+    console.log(`📊 Hints used for question ${questionId}: ${hintsUsed[questionId]}`);
+    
+    // Show hint used message
+    const resultElement = document.getElementById(`result-${questionId}`);
+    if (resultElement) {
+        resultElement.innerHTML = `
+            <div class="result-info">
+                💡 Hint ${parseInt(hintIndex) + 1} used! -25% score penalty for this question.
+            </div>
+        `;
+        setTimeout(() => {
+            resultElement.innerHTML = '';
+        }, 3000);
+    }
+}
+
+function updateProgress() {
+    const answeredCount = answeredQuestions.size;
+    const progressPercent = (answeredCount / totalQuestions) * 100;
+    
+    document.getElementById('answered-count').textContent = answeredCount;
+    document.getElementById('current-score').textContent = currentScore;
+    document.getElementById('progress-bar').style.width = `${progressPercent}%`;
+    
+    if (answeredCount === totalQuestions && !imageCompleted) {
+        // All questions answered - mark image as completed
+        imageCompleted = true;
+        
+        document.getElementById('skip-btn').style.display = 'none';
+        document.getElementById('next-btn').style.display = 'block';
+        document.getElementById('game-status').innerHTML = `
+            <p class="completion-message">
+                🎉 All ${totalQuestions} questions completed! Ready for next image!
+            </p>
+        `;
+        
+        // Update Firestore with image completion (gamesPlayed)
+        updateImageCompletion();
+        
+        // Show completion alert
+        setTimeout(() => {
+            alert(`🎊 Congratulations! You completed Image ${imageNumber} and earned ${currentScore} points!\n\nYou solved all ${totalQuestions} random questions!`);
+        }, 500);
+    }
+}
+
+// UPDATED: Firestore score update function - now also updates wins (questions completed)
+function updateFirestoreScore(points) {
+    console.log(`📤 Updating Firestore: +${points} points and +1 question completed`);
+    
+    fetch('/api/update_score', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({points: points})
+    }).then(response => response.json())
+      .then(data => {
+          if (data.success) {
+              console.log('✅ Score and question completion updated:', data.updated_fields);
+          } else {
+              console.error('❌ Score update failed:', data.error);
+          }
+      })
+      .catch(error => {
+          console.error('❌ Error updating score:', error);
+      });
+}
+
+// NEW: Function to update image completion in Firestore (gamesPlayed)
+function updateImageCompletion() {
+    console.log('📤 Recording image completion in Firestore');
+    
+    fetch('/api/complete_image', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({})
+    }).then(response => response.json())
+      .then(data => {
+          if (data.success) {
+              console.log('✅ Image completion recorded:', data.updated_fields);
+          } else {
+              console.error('❌ Image completion failed:', data.error);
+          }
+      })
+      .catch(error => {
+          console.error('❌ Error recording image completion:', error);
+      });
+}
+
+function skipImage() {
+    if (confirm('Are you sure you want to skip this image? You will not earn any points for the remaining questions.')) {
+        alert('⏭️ Image skipped! Moving to image selection...');
+        moveToImageSelection();
+    }
+}
+
+function moveToImageSelection() {
+    alert('🎯 Moving to image selection... Choose your next challenge!');
+    setTimeout(() => {
+        window.location.href = "{{ url_for('image_select') }}";
+    }, 1000);
+}
+
+// Test function - you can call this from browser console
+window.testAllHints = function() {
+    console.log('🧪 Testing all hint buttons...');
+    const hintButtons = document.querySelectorAll('.hint-btn');
+    hintButtons.forEach(button => {
+        const questionId = button.getAttribute('data-question-id');
+        const hintIndex = button.getAttribute('data-hint-index');
+        const hintText = button.getAttribute('data-hint-text');
+        console.log(`Q${questionId} Hint${hintIndex}: "${hintText}"`);
+    });
+};
+
+// Test Firestore connection
+window.testFirestore = function() {
+    console.log('🧪 Testing Firestore connection...');
+    updateFirestoreScore(0); // Test with 0 points
+};
+
+// Display current stats
+window.showStats = function() {
+    console.log('📊 Current Game Stats:', {
+        imageNumber: imageNumber,
+        questionsCompleted: answeredQuestions.size,
+        totalQuestions: totalQuestions,
+        currentScore: currentScore,
+        imageCompleted: imageCompleted
+    });
+};
+</script>
+
+<style>
+/* Your existing CSS styles remain the same */
+.game-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+    margin: 2rem 0;
+}
+
+.game-image {
+    background: var(--glass);
+    border-radius: 15px;
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.image-title {
+    color: var(--secondary);
+    margin-bottom: 1rem;
+    text-align: center;
+}
+
+.game-image-display {
+    max-width: 100%;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+}
+
+.image-instruction {
+    text-align: center;
+    margin-top: 1rem;
+    color: rgba(255,255,255,0.7);
+}
+
+.questions-container {
+    background: var(--glass);
+    border-radius: 15px;
+    padding: 1.5rem;
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+.questions-title {
+    color: var(--secondary);
+    margin-bottom: 1.5rem;
+    text-align: center;
+}
+
+.question-card {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    border-left: 4px solid var(--primary);
+    transition: all 0.3s ease;
+}
+
+.question-card:hover {
+    background: rgba(255, 255, 255, 0.08);
+    transform: translateY(-2px);
+}
+
+.question-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.question-text {
+    font-weight: 600;
+    color: white;
+    flex: 1;
+    font-size: 1.1rem;
+}
+
+.question-meta {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.difficulty-badge {
+    padding: 0.4rem 1rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.difficulty-easy {
+    background: var(--success);
+    color: white;
+}
+
+.difficulty-medium {
+    background: var(--secondary);
+    color: var(--dark);
+}
+
+.difficulty-hard {
+    background: var(--danger);
+    color: white;
+}
+
+.score-badge {
+    background: var(--primary);
+    color: white;
+    padding: 0.4rem 1rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+/* NEW: Answer input container for mobile button */
+.answer-input-container {
+    position: relative;
+    margin-bottom: 1rem;
+}
+
+.answer-input {
+    width: 100%;
+    padding: 1rem;
+    border: 2px solid var(--glass-border);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    font-family: 'Courier New', monospace;
+    font-size: 1rem;
+    transition: all 0.3s ease;
+    box-sizing: border-box;
+}
+
+.answer-input:focus {
+    outline: none;
+    border-color: var(--secondary);
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.answer-input::placeholder {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.answer-input-focused {
+    border-color: var(--secondary) !important;
+    background: rgba(255, 255, 255, 0.15) !important;
+}
+
+.answer-correct {
+    border-color: var(--success) !important;
+    background: rgba(16, 185, 129, 0.1) !important;
+}
+
+.answer-wrong {
+    border-color: var(--danger) !important;
+    background: rgba(239, 68, 68, 0.1) !important;
+}
+
+/* NEW: Mobile Enter Button */
+.mobile-enter-btn {
+    display: none; /* Hidden by default, shown on mobile */
+    width: 100%;
+    padding: 1rem;
+    margin-top: 0.5rem;
+    background: linear-gradient(135deg, var(--success), #10b981);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.mobile-enter-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+}
+
+.mobile-enter-btn:active {
+    transform: translateY(0);
+}
+
+.mobile-enter-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+.mobile-btn-pressed {
+    transform: scale(0.98);
+    background: linear-gradient(135deg, #0da271, #0e9c6d) !important;
+}
+
+.hints-container {
+    margin-top: 1rem;
+}
+
+.hint-buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+.hint-btn {
+    background: rgba(255, 215, 0, 0.1);
+    border: 1px solid rgba(255, 215, 0, 0.3);
+    color: #FFD700;
+    padding: 0.6rem 1rem;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.hint-btn:hover:not(:disabled) {
+    background: rgba(255, 215, 0, 0.2);
+    border-color: #FFD700;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(255, 215, 0, 0.2);
+}
+
+.hint-btn:disabled,
+.hint-used {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+.hints-area {
+    margin-top: 0.5rem;
+    min-height: 20px;
+}
+
+.hint-text {
+    background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(255, 165, 0, 0.1));
+    border: 1px solid rgba(255, 215, 0, 0.3);
+    padding: 1rem;
+    border-radius: 8px;
+    margin-top: 0.5rem;
+    border-left: 4px solid #FFD700;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 0.95rem;
+    animation: hintAppear 0.5s ease-out;
+}
+
+.hint-content {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+}
+
+.hint-icon {
+    font-size: 1.1rem;
+    flex-shrink: 0;
+}
+
+.hint-message {
+    flex: 1;
+}
+
+.result-info {
+    color: #FFD700;
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    background: rgba(255, 215, 0, 0.1);
+    border-radius: 5px;
+}
+
+@keyframes hintAppear {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in {
+    animation: fadeIn 0.5s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.slide-up {
+    animation: slideUp 0.6s ease-out;
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.result-message {
+    min-height: 2rem;
+}
+
+.result-success {
+    color: var(--success);
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    background: rgba(16, 185, 129, 0.1);
+    border-radius: 5px;
+}
+
+.result-error {
+    color: var(--danger);
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    background: rgba(239, 68, 68, 0.1);
+    border-radius: 5px;
+}
+
+.progress-container {
+    margin: 2rem 0;
+}
+
+.progress-info {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+    color: rgba(255,255,255,0.8);
+}
+
+.progress-bar-background {
+    background: var(--glass);
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    background: var(--success);
+    height: 100%;
+    width: 0%;
+    transition: width 0.3s ease;
+}
+
+.game-status-message {
+    text-align: center;
+    margin-top: 1rem;
+    color: rgba(255,255,255,0.7);
+}
+
+.completion-message {
+    color: var(--success);
+    font-weight: 600;
+}
+
+@media (max-width: 768px) {
+    .game-container {
+        grid-template-columns: 1fr;
+    }
+    
+    .question-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .question-meta {
+        width: 100%;
+        justify-content: space-between;
+    }
+    
+    .hint-buttons {
+        flex-direction: column;
+    }
+    
+    .hint-btn {
+        width: 100%;
+        margin-right: 0;
+    }
+    
+    .questions-container {
+        max-height: none;
+        overflow-y: visible;
+    }
+    
+    /* Show mobile enter button on mobile */
+    .mobile-enter-btn {
+        display: block;
+    }
+    
+    /* Adjust input padding for mobile */
+    .answer-input {
+        padding: 1rem 1rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .question-card {
+        padding: 1rem;
+    }
+    
+    .answer-input {
+        font-size: 16px; /* Prevents zoom on iOS */
+    }
+    
+    .mobile-enter-btn {
+        padding: 1rem 0.5rem;
+        font-size: 0.9rem;
+    }
+}
+</style>
+{% endblock %}

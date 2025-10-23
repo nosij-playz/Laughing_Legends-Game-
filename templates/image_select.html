@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1 class="dashboard-title">Choose Your Image! 🖼️</h1>
+    <p class="login-subtitle">Select one image to solve puzzles</p>
+</div>
+
+<div class="glass-card">
+    <h2 style="text-align: center; margin-bottom: 2rem; color: var(--secondary);">Available Images</h2>
+    
+    <div style="text-align: center; margin-bottom: 2rem; color: rgba(255,255,255,0.8);">
+        <p>🎲 Randomly selected from {{ total_images }} total images</p>
+    </div>
+    
+    <div class="image-grid">
+        {% for image_num in random_images %}
+        <button class="image-btn slide-up" onclick="selectImage({{ image_num }})">
+            <span style="font-size: 2.5rem; margin-bottom: 0.5rem;">{{ image_num }}</span>
+            <div style="font-size: 0.9rem; opacity: 0.8;">Image {{ image_num }}</div>
+            <div style="font-size: 0.7rem; color: var(--secondary); margin-top: 0.25rem;">Click to Play</div>
+        </button>
+        {% endfor %}
+    </div>
+    
+    <div style="text-align: center; margin-top: 2rem; color: rgba(255,255,255,0.7);">
+        <p>🔍 Analyze the image and answer questions to earn points!</p>
+    </div>
+</div>
+
+<div class="game-controls">
+    <button onclick="window.location.href='{{ url_for('dashboard') }}'" class="btn btn-danger">
+        ← Back to Dashboard
+    </button>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function selectImage(imageNumber) {
+        alert(`🎯 You selected Image ${imageNumber}! Get ready for questions!`);
+        
+        // Add loading animation to all buttons
+        const buttons = document.querySelectorAll('.image-btn');
+        buttons.forEach(btn => {
+            btn.style.opacity = '0.6';
+            btn.disabled = true;
+        });
+        
+        // Highlight selected button
+        event.target.style.background = 'var(--success)';
+        event.target.style.transform = 'scale(0.95)';
+        event.target.innerHTML = `
+            <span style="font-size: 2.5rem; margin-bottom: 0.5rem;">${imageNumber}</span>
+            <div style="font-size: 0.9rem; opacity: 0.8;">Loading...</div>
+        `;
+        
+        setTimeout(() => {
+            window.location.href = `/game/${imageNumber}`;
+        }, 500);
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        // Add animations to buttons
+        const imageButtons = document.querySelectorAll('.image-btn');
+        imageButtons.forEach((btn, index) => {
+            btn.style.animationDelay = `${index * 0.1}s`;
+        });
+        
+        // Add hover effects
+        imageButtons.forEach(btn => {
+            btn.addEventListener('mouseenter', function() {
+                this.style.borderColor = 'var(--secondary)';
+                this.style.transform = 'scale(1.05) rotate(2deg)';
+                this.style.background = 'rgba(245, 158, 11, 0.2)';
+            });
+            
+            btn.addEventListener('mouseleave', function() {
+                this.style.borderColor = 'var(--glass-border)';
+                this.style.transform = 'scale(1) rotate(0deg)';
+                this.style.background = 'var(--glass)';
+            });
+        });
+    });
+</script>
+{% endblock %}

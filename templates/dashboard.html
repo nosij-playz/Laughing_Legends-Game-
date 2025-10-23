@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1 class="dashboard-title">Welcome, {{ team_name }}! 🎮</h1>
+    <div class="status-indicator {% if status == 'online' %}status-online{% else %}status-offline{% endif %}" id="status-indicator">
+        {% if status == 'online' %}🟢 Online - Ready to Play!{% else %}🔴 Offline - Waiting for admin...{% endif %}
+    </div>
+</div>
+
+<div class="stats-container">
+    <div class="stat-card">
+        <div class="stat-value" id="current-score">{{ score }}</div>
+        <div class="stat-label">Total Score</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ wins }}</div>
+        <div class="stat-label">Games Won</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ games_played }}</div>
+        <div class="stat-label">Games Played</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ total_images }}</div>
+        <div class="stat-label">Total Images</div>
+    </div>
+</div>
+
+<div class="glass-card">
+    <button id="start-game-btn" 
+            class="btn btn-success" 
+            {% if status != 'online' %}disabled{% endif %}
+            onclick="startGame()">
+        {% if status == 'online' %}🎯 Start Game Adventure!{% else %}⏳ Waiting for Admin...{% endif %}
+    </button>
+</div>
+
+<div class="rules-container">
+    <h2 class="rules-title">📜 Game Rules & How to Play</h2>
+    <div class="rules-grid">
+        <div class="rule-item">
+            <span class="rule-icon">🎯</span>
+            <span class="rule-text">{{ total_images }} images to explore</span>
+        </div>
+        <div class="rule-item">
+            <span class="rule-icon">⭐</span>
+            <span class="rule-text">Each image has multiple questions</span>
+        </div>
+        <div class="rule-item">
+            <span class="rule-icon">💰</span>
+            <span class="rule-text">Score based on question difficulty</span>
+        </div>
+        <div class="rule-item">
+            <span class="rule-icon">💡</span>
+            <span class="rule-text">3 hints per question (-25% each)</span>
+        </div>
+        <div class="rule-item">
+            <span class="rule-icon">🔍</span>
+            <span class="rule-text">Answer format: flag{example_text}</span>
+        </div>
+    </div>
+</div>
+
+<div style="text-align: center; margin-top: 2rem; color: rgba(255,255,255,0.6);">
+    <p>🔄 Live updates every 3 seconds...</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function startGame() {
+        alert('🎮 Starting your game! You will see 4 random images to choose from.');
+        window.location.href = "{{ url_for('image_select') }}";
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        // Add animations to stat cards
+        const statCards = document.querySelectorAll('.stat-card');
+        statCards.forEach((card, index) => {
+            card.style.animationDelay = `${index * 0.2}s`;
+            card.classList.add('slide-up');
+        });
+        
+        // Add pulse animation when online
+        const startBtn = document.getElementById('start-game-btn');
+        if (!startBtn.disabled) {
+            startBtn.classList.add('pulse');
+        }
+    });
+</script>
+{% endblock %}
