@@ -6,6 +6,7 @@
     <title>Laughing Legends 🎮</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/animations.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/image-error.css') }}">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
@@ -35,7 +36,10 @@
         {% block content %}{% endblock %}
     </main>
 
-    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+        <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/image-handler.js') }}"></script>
+</body>
+</html>
     {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -5,9 +5,10 @@
     <!-- Image Section -->
     <div class="game-image glass-card">
         <h3 class="image-title">Image Puzzle #{{ image_number }}</h3>
-        <img src="{{ url_for('static', filename='LAUGH/' ~ '%03d'|format(image_number) ~ '.jpg') }}" 
+        <img src="{{ image_url }}" 
              alt="Game Image {{ image_number }}" 
-             class="game-image-display">
+             class="game-image-display"
+             onerror="handleImageError(this)">
         <div class="image-instruction">
             <p>🔍 Analyze the image and answer the questions below</p>
             <p style="font-size: 0.9rem; color: var(--secondary); margin-top: 0.5rem;">
@@ -38,12 +39,11 @@
                                 {{ difficulty|title }} 
                                 {% if difficulty == 'easy' %}★☆☆
                                 {% elif difficulty == 'medium' %}★★☆
-                                {% else %}★★★{% endif %}
+                                {% elif difficulty == 'hard' %}★★★
+                                {% else %}💎{% endif %}
                             </span>
                             <span class="score-badge">
-                                {% if difficulty == 'easy' %}10 points
-                                {% elif difficulty == 'medium' %}20 points
-                                {% else %}30 points{% endif %}
+                                {{ question.points }} points
                             </span>
                         </div>
                     </div>
@@ -51,7 +51,7 @@
                     <div class="answer-input-container">
                         <input type="text" 
                                class="answer-input" 
-                               placeholder="Enter answer in format: flag{your_answer_here}" 
+                               placeholder="Type your answer here (no flag format needed)" 
                                data-question-id="{{ q_index }}"
                                data-difficulty="{{ difficulty }}"
                                data-correct-answer="{{ question.answer }}"
@@ -67,30 +67,35 @@
                     
                     <div class="hints-container">
                         <div class="hint-buttons">
-                            <!-- FIXED: Store hints as data attributes on the buttons -->
+                            {% if question.hints and question.hints|length > 0 %}
                             <button class="hint-btn" 
                                     data-question-id="{{ q_index }}"
                                     data-hint-index="0"
-                                    data-hint-text="{{ question.hints[0] if question.hints and question.hints|length > 0 else 'No hint available' }}"
+                                    data-hint-text="{{ question.hints[0] }}"
                                     onclick="showHint(this)">
                                 💡 Hint 1 (-25%)
                             </button>
+                            {% endif %}
                             
+                            {% if question.hints and question.hints|length > 1 %}
                             <button class="hint-btn" 
                                     data-question-id="{{ q_index }}"
                                     data-hint-index="1"
-                                    data-hint-text="{{ question.hints[1] if question.hints and question.hints|length > 1 else 'No hint available' }}"
+                                    data-hint-text="{{ question.hints[1] }}"
                                     onclick="showHint(this)">
                                 💡 Hint 2 (-25%)
                             </button>
+                            {% endif %}
                             
+                            {% if question.hints and question.hints|length > 2 %}
                             <button class="hint-btn" 
                                     data-question-id="{{ q_index }}"
                                     data-hint-index="2"
-                                    data-hint-text="{{ question.hints[2] if question.hints and question.hints|length > 2 else 'No hint available' }}"
+                                    data-hint-text="{{ question.hints[2] }}"
                                     onclick="showHint(this)">
                                 💡 Hint 3 (-25%)
                             </button>
+                            {% endif %}
                         </div>
                         
                         <!-- Hint Display Area -->
@@ -128,6 +133,16 @@
 <div id="game-status" class="game-status-message">
     <p>🔍 Solve all {{ total_questions }} questions to unlock next image selection!</p>
 </div>
+
+<!-- Image Error Modal -->
+<div id="imageErrorModal" class="modal" style="display: none;">
+    <div class="modal-content glass-card">
+        <h3>⚠️ Image Loading Issue</h3>
+        <p>The image for this puzzle couldn't be loaded. You can still answer the questions below.</p>
+        <p><strong>Image URL:</strong> <code id="failedImageUrl">{{ image_url }}</code></p>
+        <button onclick="closeImageErrorModal()" class="btn btn-primary">Continue Anyway</button>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -142,6 +157,7 @@ let imageCompleted = false;
 // Initialize hints tracking
 document.addEventListener('DOMContentLoaded', function() {
     console.log('🎮 Game page loaded for image:', imageNumber);
+    console.log('📸 Image URL:', '{{ image_url }}');
     console.log('Total random questions:', totalQuestions);
     
     // Show welcome message for random questions
@@ -159,6 +175,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Debug: Log all hint buttons and their data
     const hintButtons = document.querySelectorAll('.hint-btn');
+    console.log(`🔧 Found ${hintButtons.length} hint buttons`);
     hintButtons.forEach(button => {
         const questionId = button.getAttribute('data-question-id');
         const hintIndex = button.getAttribute('data-hint-index');
@@ -197,7 +214,42 @@ document.addEventListener('DOMContentLoaded', function() {
     // Hide mobile enter buttons on desktop, show on mobile
     checkMobileView();
     window.addEventListener('resize', checkMobileView);
+    
+    // Check if image loaded successfully
+    checkImageLoad();
 });
+
+function checkImageLoad() {
+    const img = document.querySelector('.game-image-display');
+    if (img && !img.complete) {
+        img.addEventListener('load', function() {
+            console.log('✅ Image loaded successfully');
+        });
+        img.addEventListener('error', function() {
+            console.log('❌ Image failed to load');
+            showImageErrorModal();
+        });
+    }
+}
+
+function handleImageError(img) {
+    console.log('❌ Image error handler triggered');
+    showImageErrorModal();
+}
+
+function showImageErrorModal() {
+    const modal = document.getElementById('imageErrorModal');
+    if (modal) {
+        modal.style.display = 'block';
+    }
+}
+
+function closeImageErrorModal() {
+    const modal = document.getElementById('imageErrorModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
 
 function checkMobileView() {
     const mobileButtons = document.querySelectorAll('.mobile-enter-btn');
@@ -214,13 +266,42 @@ function checkAnswer(inputElement) {
     const difficulty = inputElement.getAttribute('data-difficulty');
     const userAnswer = inputElement.value.trim();
     
-    // Calculate base points
-    let basePoints = 0;
-    if (difficulty === 'easy') basePoints = 10;
-    else if (difficulty === 'medium') basePoints = 20;
-    else if (difficulty === 'hard') basePoints = 30;
+    if (!userAnswer) {
+        showTemporaryMessage(`result-${questionId}`, '❌ Please enter an answer!', 'error');
+        return;
+    }
     
-    if (userAnswer.toLowerCase() === correctAnswer.toLowerCase()) {
+    // Calculate base points from the data attribute or difficulty
+    let basePoints = 0;
+    const scoreBadge = inputElement.closest('.question-card').querySelector('.score-badge');
+    if (scoreBadge) {
+        const pointsText = scoreBadge.textContent;
+        const pointsMatch = pointsText.match(/(\d+)/);
+        if (pointsMatch) {
+            basePoints = parseInt(pointsMatch[1]);
+        }
+    }
+    
+    // If we couldn't get points from badge, fall back to difficulty
+    if (basePoints === 0) {
+        if (difficulty === 'easy') basePoints = 10;
+        else if (difficulty === 'medium') basePoints = 20;
+        else if (difficulty === 'hard') basePoints = 30;
+        else basePoints = 50; // impossible
+    }
+    
+    // Normalize answers for comparison
+    const normalizedUserAnswer = userAnswer.toLowerCase().trim();
+    const normalizedCorrectAnswer = correctAnswer.toLowerCase().trim();
+    
+    console.log(`🔍 Answer Check - Q${questionId}:`, {
+        userAnswer: normalizedUserAnswer,
+        correctAnswer: normalizedCorrectAnswer,
+        basePoints: basePoints,
+        hintsUsed: hintsUsed[questionId]
+    });
+    
+    if (normalizedUserAnswer === normalizedCorrectAnswer) {
         // Correct answer
         const hintPenalty = hintsUsed[questionId] * basePoints * 0.25;
         const finalPoints = Math.max(1, basePoints - hintPenalty);
@@ -235,11 +316,19 @@ function checkAnswer(inputElement) {
             mobileBtn.classList.add('answer-correct');
         }
         
+        // Disable hint buttons
+        const hintBtns = document.querySelectorAll(`.hint-btn[data-question-id="${questionId}"]`);
+        hintBtns.forEach(btn => {
+            btn.disabled = true;
+            btn.classList.add('hint-used');
+        });
+        
         // Show success message
         const resultElement = document.getElementById(`result-${questionId}`);
         resultElement.innerHTML = `
             <div class="result-success">
-                ✅ Correct! +${finalPoints} points ${hintsUsed[questionId] > 0 ? `(after ${hintsUsed[questionId]} hint penalties)` : ''}
+                ✅ Correct! +${finalPoints} points 
+                ${hintsUsed[questionId] > 0 ? `(after ${hintsUsed[questionId]} hint penalty)` : ''}
             </div>
         `;
         
@@ -287,7 +376,6 @@ function checkMobileAnswer(button) {
     checkAnswer(inputElement);
 }
 
-// FIXED: Simplified hint function using data attributes
 function showHint(button) {
     const questionId = button.getAttribute('data-question-id');
     const hintIndex = button.getAttribute('data-hint-index');
@@ -336,15 +424,23 @@ function showHint(button) {
     console.log(`📊 Hints used for question ${questionId}: ${hintsUsed[questionId]}`);
     
     // Show hint used message
-    const resultElement = document.getElementById(`result-${questionId}`);
-    if (resultElement) {
-        resultElement.innerHTML = `
-            <div class="result-info">
-                💡 Hint ${parseInt(hintIndex) + 1} used! -25% score penalty for this question.
-            </div>
-        `;
+    showTemporaryMessage(`result-${questionId}`, `💡 Hint ${parseInt(hintIndex) + 1} used! -25% score penalty for this question.`, 'info');
+}
+
+function showTemporaryMessage(elementId, message, type) {
+    const element = document.getElementById(elementId);
+    if (!element) return;
+    
+    const className = type === 'error' ? 'result-error' : 
+                     type === 'success' ? 'result-success' : 'result-info';
+    
+    element.innerHTML = `<div class="${className}">${message}</div>`;
+    
+    if (type !== 'success') { // Success messages stay permanent
         setTimeout(() => {
-            resultElement.innerHTML = '';
+            if (element.innerHTML.includes(message)) {
+                element.innerHTML = '';
+            }
         }, 3000);
     }
 }
@@ -379,7 +475,6 @@ function updateProgress() {
     }
 }
 
-// UPDATED: Firestore score update function - now also updates wins (questions completed)
 function updateFirestoreScore(points) {
     console.log(`📤 Updating Firestore: +${points} points and +1 question completed`);
     
@@ -400,7 +495,6 @@ function updateFirestoreScore(points) {
       });
 }
 
-// NEW: Function to update image completion in Firestore (gamesPlayed)
 function updateImageCompletion() {
     console.log('📤 Recording image completion in Firestore');
     
@@ -447,6 +541,14 @@ window.testAllHints = function() {
     });
 };
 
+window.testAnswerCheck = function(questionId, testAnswer) {
+    const input = document.getElementById(`answer-input-${questionId}`);
+    if (input) {
+        input.value = testAnswer;
+        checkAnswer(input);
+    }
+};
+
 // Test Firestore connection
 window.testFirestore = function() {
     console.log('🧪 Testing Firestore connection...');
@@ -460,13 +562,14 @@ window.showStats = function() {
         questionsCompleted: answeredQuestions.size,
         totalQuestions: totalQuestions,
         currentScore: currentScore,
-        imageCompleted: imageCompleted
+        imageCompleted: imageCompleted,
+        hintsUsed: hintsUsed
     });
 };
 </script>
 
 <style>
-/* Your existing CSS styles remain the same */
+/* Enhanced CSS with better animations and mobile support */
 .game-container {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -481,6 +584,7 @@ window.showStats = function() {
     display: flex;
     flex-direction: column;
     align-items: center;
+    position: relative;
 }
 
 .image-title {
@@ -491,8 +595,14 @@ window.showStats = function() {
 
 .game-image-display {
     max-width: 100%;
+    max-height: 400px;
     border-radius: 10px;
     box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+    transition: transform 0.3s ease;
+}
+
+.game-image-display:hover {
+    transform: scale(1.02);
 }
 
 .image-instruction {
@@ -522,11 +632,29 @@ window.showStats = function() {
     margin-bottom: 1.5rem;
     border-left: 4px solid var(--primary);
     transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.question-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+    transition: left 0.5s ease;
+}
+
+.question-card:hover::before {
+    left: 100%;
 }
 
 .question-card:hover {
     background: rgba(255, 255, 255, 0.08);
     transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.2);
 }
 
 .question-header {
@@ -543,6 +671,7 @@ window.showStats = function() {
     color: white;
     flex: 1;
     font-size: 1.1rem;
+    line-height: 1.4;
 }
 
 .question-meta {
@@ -574,6 +703,11 @@ window.showStats = function() {
     color: white;
 }
 
+.difficulty-impossible {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+}
+
 .score-badge {
     background: var(--primary);
     color: white;
@@ -584,7 +718,6 @@ window.showStats = function() {
     white-space: nowrap;
 }
 
-/* NEW: Answer input container for mobile button */
 .answer-input-container {
     position: relative;
     margin-bottom: 1rem;
@@ -607,6 +740,7 @@ window.showStats = function() {
     outline: none;
     border-color: var(--secondary);
     background: rgba(255, 255, 255, 0.15);
+    box-shadow: 0 0 0 3px rgba(100, 200, 255, 0.1);
 }
 
 .answer-input::placeholder {
@@ -621,16 +755,29 @@ window.showStats = function() {
 .answer-correct {
     border-color: var(--success) !important;
     background: rgba(16, 185, 129, 0.1) !important;
+    animation: pulseSuccess 0.6s ease;
 }
 
 .answer-wrong {
     border-color: var(--danger) !important;
     background: rgba(239, 68, 68, 0.1) !important;
+    animation: shake 0.5s ease;
 }
 
-/* NEW: Mobile Enter Button */
+@keyframes pulseSuccess {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.02); }
+    100% { transform: scale(1); }
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    75% { transform: translateX(5px); }
+}
+
 .mobile-enter-btn {
-    display: none; /* Hidden by default, shown on mobile */
+    display: none;
     width: 100%;
     padding: 1rem;
     margin-top: 0.5rem;
@@ -787,6 +934,7 @@ window.showStats = function() {
     padding: 0.5rem;
     background: rgba(16, 185, 129, 0.1);
     border-radius: 5px;
+    animation: slideUp 0.3s ease;
 }
 
 .result-error {
@@ -795,6 +943,7 @@ window.showStats = function() {
     padding: 0.5rem;
     background: rgba(239, 68, 68, 0.1);
     border-radius: 5px;
+    animation: shake 0.5s ease;
 }
 
 .progress-container {
@@ -816,10 +965,27 @@ window.showStats = function() {
 }
 
 .progress-bar-fill {
-    background: var(--success);
+    background: linear-gradient(90deg, var(--success), #10b981);
     height: 100%;
     width: 0%;
-    transition: width 0.3s ease;
+    transition: width 0.5s ease;
+    position: relative;
+}
+
+.progress-bar-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% { left: -100%; }
+    100% { left: 100%; }
 }
 
 .game-status-message {
@@ -831,6 +997,50 @@ window.showStats = function() {
 .completion-message {
     color: var(--success);
     font-weight: 600;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+/* Modal Styles */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    background: var(--glass);
+    padding: 2rem;
+    border-radius: 15px;
+    max-width: 500px;
+    width: 90%;
+    text-align: center;
+}
+
+.modal-content h3 {
+    color: var(--danger);
+    margin-bottom: 1rem;
+}
+
+.modal-content code {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 0.5rem;
+    border-radius: 5px;
+    font-family: monospace;
+    word-break: break-all;
+    display: block;
+    margin: 1rem 0;
 }
 
 @media (max-width: 768px) {
@@ -862,14 +1072,16 @@ window.showStats = function() {
         overflow-y: visible;
     }
     
-    /* Show mobile enter button on mobile */
     .mobile-enter-btn {
         display: block;
     }
     
-    /* Adjust input padding for mobile */
     .answer-input {
         padding: 1rem 1rem;
+    }
+    
+    .game-image-display {
+        max-height: 300px;
     }
 }
 
@@ -879,12 +1091,16 @@ window.showStats = function() {
     }
     
     .answer-input {
-        font-size: 16px; /* Prevents zoom on iOS */
+        font-size: 16px;
     }
     
     .mobile-enter-btn {
         padding: 1rem 0.5rem;
         font-size: 0.9rem;
+    }
+    
+    .game-image {
+        padding: 1rem;
     }
 }
 </style>

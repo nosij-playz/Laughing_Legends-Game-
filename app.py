@@ -12,11 +12,23 @@ app.secret_key = 'your-secret-key-here'
 
 # Initialize Firebase
 try:
-    cred = credentials.Certificate('laughinglegends-4b740-firebase-adminsdk-fbsvc-813f00d3ba.json')
-    firebase_admin.initialize_app(cred)
-    db = firestore.client()
-except:
-    print("Firebase initialization failed - using mock data")
+    # Get Firebase credentials path from environment variable
+    firebase_cred_path = os.environ.get('FIREBASE_CREDENTIALS')
+    
+    # Check if file exists before initializing
+    if os.path.exists(firebase_cred_path):
+        cred = credentials.Certificate(firebase_cred_path)
+        firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        print(f"✅ Firebase initialized successfully with: {firebase_cred_path}")
+    else:
+        print(f"⚠️ Firebase credentials file not found at: {firebase_cred_path}")
+        print("🚫 Using mock data mode")
+        db = None
+except Exception as e:
+    print(f"❌ Firebase initialization failed: {e}")
+    print("🚫 Using mock data mode")
+    db = None
 
 # Initialize SQLite
 def init_sqlite():
@@ -76,23 +88,29 @@ def login():
     if request.method == 'POST':
         unique_code = request.form.get('unique_code')
         
-        # Verify code with Firestore
-        try:
-            participants_ref = db.collection('participants')
-            query = participants_ref.where('uniqueCode', '==', unique_code).limit(1)
-            results = query.get()
-            
-            if len(results) == 1:
-                team_data = results[0].to_dict()
-                session['team_name'] = team_data['teamName']
-                session['unique_code'] = unique_code
-                return redirect(url_for('dashboard'))
-            else:
-                return render_template('login.html', error='Invalid code!')
+        # Verify code with Firestore (if Firebase is available)
+        if db is not None:
+            try:
+                participants_ref = db.collection('participants')
+                query = participants_ref.where('uniqueCode', '==', unique_code).limit(1)
+                results = query.get()
                 
-        except Exception as e:
-            print(f"Firebase error: {e}")
-            return render_template('login.html', error='Database error!')
+                if len(results) == 1:
+                    team_data = results[0].to_dict()
+                    session['team_name'] = team_data['teamName']
+                    session['unique_code'] = unique_code
+                    return redirect(url_for('dashboard'))
+                else:
+                    return render_template('login.html', error='Invalid code!')
+                    
+            except Exception as e:
+                print(f"Firebase error: {e}")
+                return render_template('login.html', error='Database error!')
+        else:
+            # Mock login for development without Firebase
+            session['team_name'] = f"Team-{unique_code}"
+            session['unique_code'] = unique_code
+            return redirect(url_for('dashboard'))
     
     return render_template('login.html')
 
@@ -101,23 +119,27 @@ def login():
 def dashboard():
     team_name = session['team_name']
     
-    # Get leaderboard data from Firestore
-    try:
-        leaderboard_ref = db.collection('leaderboard')
-        query = leaderboard_ref.where('name', '==', team_name).limit(1)
-        results = query.get()
-        
-        if len(results) == 1:
-            team_stats = results[0].to_dict()
-            status = team_stats.get('status', 'offline')
-            score = team_stats.get('totalPoints', 0)
-            wins = team_stats.get('wins', 0)
-            games_played = team_stats.get('gamesPlayed', 0)
-        else:
+    # Get leaderboard data from Firestore (if available)
+    if db is not None:
+        try:
+            leaderboard_ref = db.collection('leaderboard')
+            query = leaderboard_ref.where('name', '==', team_name).limit(1)
+            results = query.get()
+            
+            if len(results) == 1:
+                team_stats = results[0].to_dict()
+                status = team_stats.get('status', 'offline')
+                score = team_stats.get('totalPoints', 0)
+                wins = team_stats.get('wins', 0)
+                games_played = team_stats.get('gamesPlayed', 0)
+            else:
+                status, score, wins, games_played = 'offline', 0, 0, 0
+        except Exception as e:
+            print(f"Firestore error: {e}")
             status, score, wins, games_played = 'offline', 0, 0, 0
-    except Exception as e:
-        print(f"Firestore error: {e}")
-        status, score, wins, games_played = 'offline', 0, 0, 0
+    else:
+        # Mock data for development
+        status, score, wins, games_played = 'online', 150, 5, 10
     
     return render_template('dashboard.html', 
                          team_name=team_name,
@@ -131,23 +153,26 @@ def dashboard():
 @login_required
 def api_status():
     team_name = session['team_name']
-    try:
-        leaderboard_ref = db.collection('leaderboard')
-        query = leaderboard_ref.where('name', '==', team_name).limit(1)
-        results = query.get()
-        
-        if len(results) == 1:
-            team_data = results[0].to_dict()
-            return jsonify({
-                'status': team_data.get('status', 'offline'),
-                'score': team_data.get('totalPoints', 0),
-                'wins': team_data.get('wins', 0),
-                'games_played': team_data.get('gamesPlayed', 0)
-            })
-    except:
-        pass
     
-    return jsonify({'status': 'offline', 'score': 0, 'wins': 0, 'games_played': 0})
+    if db is not None:
+        try:
+            leaderboard_ref = db.collection('leaderboard')
+            query = leaderboard_ref.where('name', '==', team_name).limit(1)
+            results = query.get()
+            
+            if len(results) == 1:
+                team_data = results[0].to_dict()
+                return jsonify({
+                    'status': team_data.get('status', 'offline'),
+                    'score': team_data.get('totalPoints', 0),
+                    'wins': team_data.get('wins', 0),
+                    'games_played': team_data.get('gamesPlayed', 0)
+                })
+        except Exception as e:
+            print(f"Firestore error: {e}")
+    
+    # Return mock data if Firebase is not available
+    return jsonify({'status': 'online', 'score': 150, 'wins': 5, 'games_played': 10})
 
 @app.route('/image-select')
 @login_required
@@ -178,6 +203,9 @@ def extract_questions_from_data(image_data):
         for key, value in image_data.items():
             print(f"   Key: {key}, Type: {type(value)}")
             
+            # Get points for this difficulty level
+            points = get_difficulty_score(key)
+            
             if isinstance(value, list):
                 # Structure: {"easy": [questions], "medium": [questions], "impossible": [questions]}
                 for item in value:
@@ -186,7 +214,8 @@ def extract_questions_from_data(image_data):
                             'question': item['question'],
                             'answer': item.get('answer', ''),
                             'hints': item.get('hints', []),
-                            'difficulty': key
+                            'difficulty': key,
+                            'points': points
                         })
             elif isinstance(value, dict) and 'question' in value:
                 # Structure: {"easy": {"question": "...", ...}}
@@ -194,7 +223,8 @@ def extract_questions_from_data(image_data):
                     'question': value['question'],
                     'answer': value.get('answer', ''),
                     'hints': value.get('hints', []),
-                    'difficulty': key
+                    'difficulty': key,
+                    'points': points
                 })
     
     elif isinstance(image_data, list):
@@ -258,7 +288,8 @@ def game(image_number):
             question_data = {
                 'question': question['question'],
                 'answer': question['answer'],
-                'hints': question['hints']
+                    'hints': question['hints'],
+                    'points': question['points']
             }
             questions_by_difficulty[difficulty].append(question_data)
         
@@ -266,9 +297,13 @@ def game(image_number):
         print(f"🎯 Rendering game.html with {selected_count} questions")
         print("=== GAME ROUTE END ===\n")
         
+        # Create the URL for the image using url_for
+        image_url = url_for('static', filename=image_key)
+        
         return render_template('game.html', 
                              image_number=image_number,
                              image_key=image_key,
+                             image_url=image_url,
                              image_data=questions_by_difficulty,
                              total_questions=selected_count)
     else:
@@ -288,55 +323,60 @@ def update_score():
     
     print(f"Updating score for {team_name}: +{points} points")
     
-    # Update Firestore score
-    try:
-        leaderboard_ref = db.collection('leaderboard')
-        query = leaderboard_ref.where('name', '==', team_name).limit(1)
-        results = query.get()
-        
-        if len(results) == 1:
-            doc = results[0]
-            current_data = doc.to_dict()
+    # Update Firestore score (if Firebase is available)
+    if db is not None:
+        try:
+            leaderboard_ref = db.collection('leaderboard')
+            query = leaderboard_ref.where('name', '==', team_name).limit(1)
+            results = query.get()
             
-            update_data = {}
-            
-            # Update totalPoints if it exists
-            if 'totalPoints' in current_data:
-                current_score = current_data.get('totalPoints', 0)
-                new_score = current_score + points
-                update_data['totalPoints'] = new_score
-                print(f"✅ totalPoints updated: {current_score} -> {new_score}")
-            else:
-                print("❌ totalPoints field not found in document")
-                return jsonify({'success': False, 'error': 'totalPoints field not found'})
-            
-            # Update wins (questions completed) if it exists
-            if 'wins' in current_data:
-                current_wins = current_data.get('wins', 0)
-                new_wins = current_wins + 1
-                update_data['wins'] = new_wins
-                print(f"✅ wins (questions) updated: {current_wins} -> {new_wins}")
-            
-            # Update status to online when active
-            if 'status' in current_data:
-                update_data['status'] = 'online'
-                print("✅ Status updated to: online")
-            
-            if update_data:
-                doc.reference.update(update_data)
-                print(f"✅ Firestore updated successfully: {update_data}")
-                return jsonify({'success': True, 'updated_fields': update_data})
-            else:
-                print("❌ No fields to update")
-                return jsonify({'success': False, 'error': 'No matching fields to update'})
+            if len(results) == 1:
+                doc = results[0]
+                current_data = doc.to_dict()
                 
-        else:
-            print("❌ Team not found in leaderboard")
-            return jsonify({'success': False, 'error': 'Team not found'})
-            
-    except Exception as e:
-        print(f"❌ Score update error: {e}")
-        return jsonify({'success': False, 'error': str(e)})
+                update_data = {}
+                
+                # Update totalPoints if it exists
+                if 'totalPoints' in current_data:
+                    current_score = current_data.get('totalPoints', 0)
+                    new_score = current_score + points
+                    update_data['totalPoints'] = new_score
+                    print(f"✅ totalPoints updated: {current_score} -> {new_score}")
+                else:
+                    print("❌ totalPoints field not found in document")
+                    return jsonify({'success': False, 'error': 'totalPoints field not found'})
+                
+                # Update wins (questions completed) if it exists
+                if 'wins' in current_data:
+                    current_wins = current_data.get('wins', 0)
+                    new_wins = current_wins + 1
+                    update_data['wins'] = new_wins
+                    print(f"✅ wins (questions) updated: {current_wins} -> {new_wins}")
+                
+                # Update status to online when active
+                if 'status' in current_data:
+                    update_data['status'] = 'online'
+                    print("✅ Status updated to: online")
+                
+                if update_data:
+                    doc.reference.update(update_data)
+                    print(f"✅ Firestore updated successfully: {update_data}")
+                    return jsonify({'success': True, 'updated_fields': update_data})
+                else:
+                    print("❌ No fields to update")
+                    return jsonify({'success': False, 'error': 'No matching fields to update'})
+                    
+            else:
+                print("❌ Team not found in leaderboard")
+                return jsonify({'success': False, 'error': 'Team not found'})
+                
+        except Exception as e:
+            print(f"❌ Score update error: {e}")
+            return jsonify({'success': False, 'error': str(e)})
+    else:
+        # Mock success response when Firebase is not available
+        print(f"✅ Mock score update: {team_name} +{points} points")
+        return jsonify({'success': True, 'mock_update': True, 'points_added': points})
 
 @app.route('/debug-images')
 def debug_images():
@@ -371,44 +411,49 @@ def complete_image():
     
     print(f"Marking image completion for {team_name}")
     
-    try:
-        leaderboard_ref = db.collection('leaderboard')
-        query = leaderboard_ref.where('name', '==', team_name).limit(1)
-        results = query.get()
-        
-        if len(results) == 1:
-            doc = results[0]
-            current_data = doc.to_dict()
+    if db is not None:
+        try:
+            leaderboard_ref = db.collection('leaderboard')
+            query = leaderboard_ref.where('name', '==', team_name).limit(1)
+            results = query.get()
             
-            update_data = {}
-            
-            # Update gamesPlayed if it exists
-            if 'gamesPlayed' in current_data:
-                current_games = current_data.get('gamesPlayed', 0)
-                new_games = current_games + 1
-                update_data['gamesPlayed'] = new_games
-                print(f"✅ gamesPlayed updated: {current_games} -> {new_games}")
-            else:
-                print("⚠️ gamesPlayed field not found in document")
-            
-            # Update status to online
-            if 'status' in current_data:
-                update_data['status'] = 'online'
-                print("✅ Status updated to: online")
-            
-            if update_data:
-                doc.reference.update(update_data)
-                print(f"✅ Image completion recorded: {update_data}")
-                return jsonify({'success': True, 'updated_fields': update_data})
-            else:
-                return jsonify({'success': False, 'error': 'No fields to update'})
+            if len(results) == 1:
+                doc = results[0]
+                current_data = doc.to_dict()
                 
-        else:
-            return jsonify({'success': False, 'error': 'Team not found'})
-            
-    except Exception as e:
-        print(f"❌ Image completion update error: {e}")
-        return jsonify({'success': False, 'error': str(e)})
+                update_data = {}
+                
+                # Update gamesPlayed if it exists
+                if 'gamesPlayed' in current_data:
+                    current_games = current_data.get('gamesPlayed', 0)
+                    new_games = current_games + 1
+                    update_data['gamesPlayed'] = new_games
+                    print(f"✅ gamesPlayed updated: {current_games} -> {new_games}")
+                else:
+                    print("⚠️ gamesPlayed field not found in document")
+                
+                # Update status to online
+                if 'status' in current_data:
+                    update_data['status'] = 'online'
+                    print("✅ Status updated to: online")
+                
+                if update_data:
+                    doc.reference.update(update_data)
+                    print(f"✅ Image completion recorded: {update_data}")
+                    return jsonify({'success': True, 'updated_fields': update_data})
+                else:
+                    return jsonify({'success': False, 'error': 'No fields to update'})
+                    
+            else:
+                return jsonify({'success': False, 'error': 'Team not found'})
+                
+        except Exception as e:
+            print(f"❌ Image completion update error: {e}")
+            return jsonify({'success': False, 'error': str(e)})
+    else:
+        # Mock success response when Firebase is not available
+        print(f"✅ Mock image completion: {team_name}")
+        return jsonify({'success': True, 'mock_update': True})
 
 @app.route('/debug-difficulties')
 def debug_difficulties():
@@ -428,22 +473,26 @@ def debug_difficulties():
 def debug_leaderboard():
     """Debug route to check leaderboard data for current team"""
     team_name = session['team_name']
-    try:
-        leaderboard_ref = db.collection('leaderboard')
-        query = leaderboard_ref.where('name', '==', team_name).limit(1)
-        results = query.get()
-        
-        if len(results) == 1:
-            team_data = results[0].to_dict()
-            return jsonify({
-                'team_name': team_name,
-                'current_data': team_data,
-                'available_fields': list(team_data.keys())
-            })
-        else:
-            return jsonify({'error': 'Team not found'})
-    except Exception as e:
-        return jsonify({'error': str(e)})
+    
+    if db is not None:
+        try:
+            leaderboard_ref = db.collection('leaderboard')
+            query = leaderboard_ref.where('name', '==', team_name).limit(1)
+            results = query.get()
+            
+            if len(results) == 1:
+                team_data = results[0].to_dict()
+                return jsonify({
+                    'team_name': team_name,
+                    'current_data': team_data,
+                    'available_fields': list(team_data.keys())
+                })
+            else:
+                return jsonify({'error': 'Team not found'})
+        except Exception as e:
+            return jsonify({'error': str(e)})
+    else:
+        return jsonify({'error': 'Firebase not available', 'team_name': team_name})
 
 @app.route('/check-image/<int:image_number>')
 def check_image(image_number):
